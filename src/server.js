@@ -19,9 +19,11 @@ const manifest = require('../lib/manifest');
 
 const PORT = parseInt(process.env.SPARK_PORT || process.env.PORT || '8085', 10);
 const BIND = process.env.SPARK_BIND || '127.0.0.1';
-const MEMORY_DIR = process.env.SPARK_MEMORY_DIR || process.env.VAULT_MEMORY_DIR || path.join(__dirname, '..', 'memory');
+const VAULT_URL = process.env.VAULT_URL || '';
 const LOGS_DIR = process.env.SPARK_LOGS_DIR || path.join(__dirname, '..', 'runtime', 'logs');
-const LEARNING_DIR = path.join(MEMORY_DIR, 'learning');
+// Lesson/article content is still plain files on spark's own disk, not
+// vault-owned rows -- only TSV data moved to the remote store.
+const LEARNING_DIR = process.env.SPARK_LEARNING_DIR || path.join(__dirname, '..', 'memory', 'learning');
 // No hardcoded personal path -- was Sconl/Core/Axial/Creator/Author/author-nonfiction
 // in the original; genericized to an env var with a neutral local default.
 const ARTICLES_DIR = process.env.SPARK_ARTICLES_DIR || path.join(__dirname, '..', 'articles');
@@ -77,7 +79,15 @@ async function main() {
   console.log(`  secrets: ${secretsResult.source}, ${secretsResult.count} key(s)`);
 
   const auditLog = createAuditLog({ logsDir: LOGS_DIR });
-  const store = createStore({ memoryDir: MEMORY_DIR, auditLog });
+  if (!VAULT_URL) {
+    console.error('  REFUSING TO START: VAULT_URL is not configured -- spark has no data store without it.');
+    process.exit(1);
+  }
+  const store = createStore({
+    baseUrl: VAULT_URL,
+    getToken: () => process.env.VAULT_TOKEN || secretStore.get('VAULT_TOKEN') || '',
+    auditLog,
+  });
   const readTSV = store.read, appendTSV = store.append, rewriteTSV = store.rewrite;
 
   const ideas = createIdeasClient({ readTSV, appendTSV, rewriteTSV, auditLog, tsvEscapeText, tsvUnescapeText });
@@ -121,22 +131,22 @@ async function main() {
     if (!checkAuth(req)) return sendJson(res, 404, { error: 'Not Found' });
 
     try {
-      if (pathname === '/ideas' && req.method === 'GET') return sendJson(res, 200, ideas.listIdeas());
+      if (pathname === '/ideas' && req.method === 'GET') return sendJson(res, 200, await ideas.listIdeas());
       if (pathname === '/ideas' && req.method === 'POST') {
-        const row = ideas.captureIdea(JSON.parse(await readBody(req) || '{}'));
+        const row = await ideas.captureIdea(JSON.parse(await readBody(req) || '{}'));
         return sendJson(res, 200, { success: true, id: row.ID, idea: row });
       }
-      if (pathname === '/ideas/update' && req.method === 'POST') return sendJson(res, 200, ideas.updateIdea(JSON.parse(await readBody(req) || '{}')));
+      if (pathname === '/ideas/update' && req.method === 'POST') return sendJson(res, 200, await ideas.updateIdea(JSON.parse(await readBody(req) || '{}')));
       if (pathname === '/ideas/delete' && req.method === 'POST') {
         const p = JSON.parse(await readBody(req) || '{}');
-        return sendJson(res, 200, ideas.deleteIdea(p.id));
+        return sendJson(res, 200, await ideas.deleteIdea(p.id));
       }
 
       if (pathname === '/act' && req.method === 'POST') {
         return sendJson(res, 200, await nlu.act(JSON.parse(await readBody(req) || '{}')));
       }
 
-      if (pathname === '/learning' && req.method === 'GET') return sendJson(res, 200, learning.listCourses());
+      if (pathname === '/learning' && req.method === 'GET') return sendJson(res, 200, await learning.listCourses());
       if (pathname === '/learning/lesson' && req.method === 'GET') {
         return sendJson(res, 200, learning.getLesson(url.searchParams.get('course') || '', url.searchParams.get('file') || ''));
       }
@@ -147,9 +157,9 @@ async function main() {
         const p = JSON.parse(await readBody(req) || '{}');
         return sendJson(res, 200, learning.saveNote(p.course, p.file, p.text));
       }
-      if (pathname === '/learning/resume' && req.method === 'POST') return sendJson(res, 200, learning.saveResume(JSON.parse(await readBody(req) || '{}')));
-      if (pathname === '/learning/progress' && req.method === 'POST') return sendJson(res, 200, learning.saveProgress(JSON.parse(await readBody(req) || '{}')));
-      if (pathname === '/learning/contributions' && req.method === 'GET') return sendJson(res, 200, learning.contributions());
+      if (pathname === '/learning/resume' && req.method === 'POST') return sendJson(res, 200, await learning.saveResume(JSON.parse(await readBody(req) || '{}')));
+      if (pathname === '/learning/progress' && req.method === 'POST') return sendJson(res, 200, await learning.saveProgress(JSON.parse(await readBody(req) || '{}')));
+      if (pathname === '/learning/contributions' && req.method === 'GET') return sendJson(res, 200, await learning.contributions());
 
       if (pathname === '/articles' && req.method === 'GET') return sendJson(res, 200, articles.listArticles());
     } catch (e) {
