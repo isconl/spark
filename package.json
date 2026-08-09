@@ -1,0 +1,18 @@
+{
+  "name": "@isconl/spark",
+  "version": "0.1.0",
+  "private": false,
+  "description": "isconl-agent engine: ideas pipeline, chat/NLU + natural-language action parser, learning, articles",
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@bitwarden/sdk-napi": "^1.0.0"
+  },
+  "license": "MIT"
+}
