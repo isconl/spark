@@ -7,9 +7,9 @@ function makeStore(seed = {}) {
   const data = { ...seed };
   return {
     data,
-    readTSV: (rel) => (data[rel] || []).slice(),
-    appendTSV: (rel, row) => { (data[rel] = data[rel] || []).push(row); },
-    rewriteTSV: (rel, fn) => { const before = (data[rel] || []).length; data[rel] = fn((data[rel] || []).slice()); return before - data[rel].length; },
+    readTSV: async (rel) => (data[rel] || []).slice(),
+    appendTSV: async (rel, row) => { (data[rel] = data[rel] || []).push(row); return true; },
+    rewriteTSV: async (rel, fn) => { const before = (data[rel] || []).length; data[rel] = fn((data[rel] || []).slice()); return before - data[rel].length; },
   };
 }
 
@@ -17,7 +17,7 @@ test('createLearningClient throws without readTSV/appendTSV/rewriteTSV', () => {
   assert.throws(() => createLearningClient({}));
 });
 
-test('listCourses attaches lessons (with progress status) and the resume list, newest first', () => {
+test('listCourses attaches lessons (with progress status) and the resume list, newest first', async () => {
   const store = makeStore({
     'learning/courses.tsv': [{ ID: 'js101', NAME: 'JS Basics' }],
     'learning/progress.tsv': [{ COURSE_ID: 'js101', LESSON: '01-intro.md', STATUS: 'done', UPDATED_AT: '2026-08-01' }],
@@ -26,7 +26,7 @@ test('listCourses attaches lessons (with progress status) and the resume list, n
   const client = createLearningClient({ ...store,
     listLessonFiles: (id) => id === 'js101' ? [{ file: '01-intro.md', raw: '# Intro\nHello world', mtimeIso: '2026-08-01T00:00:00Z' }] : [],
   });
-  const r = client.listCourses();
+  const r = await client.listCourses();
   assert.equal(r.courses[0].lessons[0].title, 'Intro');
   assert.equal(r.courses[0].lessons[0].status, 'done');
   assert.equal(r.resume.length, 1);
@@ -51,29 +51,29 @@ test('saveNote writes via the injected writer and getNote reads it back', () => 
   assert.equal(client.getNote('js101', '01-intro.md').text, 'my margin note');
 });
 
-test('saveResume creates a new row, then updates it in place on a repeat call for the same course', () => {
+test('saveResume creates a new row, then updates it in place on a repeat call for the same course', async () => {
   const store = makeStore();
   const client = createLearningClient({ ...store });
-  client.saveResume({ course: 'js101', lesson: '01-intro.md', scrollPct: 40 });
-  client.saveResume({ course: 'js101', lesson: '02-vars.md', scrollPct: 80 });
+  await client.saveResume({ course: 'js101', lesson: '01-intro.md', scrollPct: 40 });
+  await client.saveResume({ course: 'js101', lesson: '02-vars.md', scrollPct: 80 });
   assert.equal(store.data['learning/resume.tsv'].length, 1);
   assert.equal(store.data['learning/resume.tsv'][0].LESSON, '02-vars.md');
   assert.equal(store.data['learning/resume.tsv'][0].SCROLL_PCT, '80');
 });
 
-test('saveProgress clamps status to a known value and creates or updates as appropriate', () => {
+test('saveProgress clamps status to a known value and creates or updates as appropriate', async () => {
   const store = makeStore();
   const client = createLearningClient({ ...store });
-  client.saveProgress({ course: 'js101', lesson: '01-intro.md', status: 'bogus' });
+  await client.saveProgress({ course: 'js101', lesson: '01-intro.md', status: 'bogus' });
   assert.equal(store.data['learning/progress.tsv'][0].STATUS, 'learning');
-  client.saveProgress({ course: 'js101', lesson: '01-intro.md', status: 'done' });
+  await client.saveProgress({ course: 'js101', lesson: '01-intro.md', status: 'done' });
   assert.equal(store.data['learning/progress.tsv'].length, 1);
   assert.equal(store.data['learning/progress.tsv'][0].STATUS, 'done');
 });
 
-test('contributions returns a 365-day series ending today', () => {
+test('contributions returns a 365-day series ending today', async () => {
   const client = createLearningClient({ ...makeStore() });
-  const r = client.contributions();
+  const r = await client.contributions();
   assert.equal(r.days.length, 365);
   assert.equal(r.days[r.days.length - 1].date, new Date().toISOString().slice(0, 10));
 });

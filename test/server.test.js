@@ -1,36 +1,75 @@
 'use strict';
 /**
- * End-to-end smoke tests: start spark's real HTTP server and hit it with
- * real requests -- same purpose as every other engine's server.test.js.
+ * End-to-end smoke tests: start spark's real HTTP server, backed by a real
+ * (fake, in-process) vault HTTP server for TSV data -- same shape as the
+ * real GET/POST/PUT /vault/:collection contract, so this exercises the
+ * actual remote-store wire format, not a shortcut.
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const http = require('http');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-function tmpEnv() {
-  const memoryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'spark-e2e-memory-'));
-  const logsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'spark-e2e-logs-'));
-  const articlesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'spark-e2e-articles-'));
-  fs.mkdirSync(path.join(memoryDir, 'spark'), { recursive: true });
-  fs.mkdirSync(path.join(memoryDir, 'scope'), { recursive: true });
-  fs.mkdirSync(path.join(memoryDir, 'learning', 'js101'), { recursive: true });
-  fs.writeFileSync(path.join(memoryDir, 'learning', 'courses.tsv'), 'ID\tNAME\n');
-  fs.writeFileSync(path.join(memoryDir, 'learning', 'progress.tsv'), 'COURSE_ID\tLESSON\tSTATUS\tUPDATED_AT\n');
-  fs.writeFileSync(path.join(memoryDir, 'learning', 'resume.tsv'), 'COURSE_ID\tLESSON\tSCROLL_PCT\tUPDATED_AT\n');
-  fs.writeFileSync(path.join(memoryDir, 'learning', 'js101', '01-intro.md'), '# Intro\nHello');
-  fs.writeFileSync(path.join(memoryDir, 'scope', 'tasks.tsv'), 'ID\tTITLE\tSTATUS\tPRIORITY\tDUE_DATE\tJIRA_KEY\n');
-  fs.writeFileSync(path.join(articlesDir, '20260101_essay.md'), '# My Essay\n\n' + 'word '.repeat(50));
-  return { memoryDir, logsDir, articlesDir };
+function startFakeVault(seed = {}) {
+  const data = { ...seed };
+  return new Promise((resolve) => {
+    const server = http.createServer((req, res) => {
+      const url = new URL(req.url, 'http://localhost');
+      const collection = decodeURIComponent(url.pathname.slice('/vault/'.length));
+      let body = '';
+      req.on('data', (c) => { body += c; });
+      req.on('end', () => {
+        res.setHeader('Content-Type', 'application/json');
+        if (req.method === 'GET') {
+          res.writeHead(200);
+          return res.end(JSON.stringify({ collection, rows: data[collection] || [] }));
+        }
+        if (req.method === 'POST') {
+          let row = {};
+          try { row = JSON.parse(body || '{}'); } catch { /* ignore */ }
+          (data[collection] = data[collection] || []).push(row);
+          res.writeHead(200);
+          return res.end(JSON.stringify({ ok: true, collection }));
+        }
+        if (req.method === 'PUT') {
+          let rows = [];
+          try { rows = JSON.parse(body || '{}').rows || []; } catch { /* ignore */ }
+          const before = (data[collection] || []).length;
+          data[collection] = rows;
+          res.writeHead(200);
+          return res.end(JSON.stringify({ ok: true, collection, count: rows.length, removed: before - rows.length }));
+        }
+        res.writeHead(404);
+        res.end(JSON.stringify({ error: 'Not Found' }));
+      });
+    });
+    server.listen(0, '127.0.0.1', () => resolve({ server, data, port: server.address().port }));
+  });
 }
 
-async function startServer(envOverrides = {}) {
-  const { memoryDir, logsDir, articlesDir } = tmpEnv();
+function tmpEnv() {
+  const logsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'spark-e2e-logs-'));
+  const articlesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'spark-e2e-articles-'));
+  const learningDir = fs.mkdtempSync(path.join(os.tmpdir(), 'spark-e2e-learning-'));
+  fs.mkdirSync(path.join(learningDir, 'js101'), { recursive: true });
+  fs.writeFileSync(path.join(learningDir, 'js101', '01-intro.md'), '# Intro\nHello');
+  fs.writeFileSync(path.join(articlesDir, '20260101_essay.md'), '# My Essay\n\n' + 'word '.repeat(50));
+  return { logsDir, articlesDir, learningDir };
+}
+
+async function startServer(envOverrides = {}, vaultSeed = {}) {
+  const { logsDir, articlesDir, learningDir } = tmpEnv();
+  const vault = await startFakeVault({
+    'learning/courses.tsv': [], 'learning/progress.tsv': [], 'learning/resume.tsv': [],
+    'scope/tasks.tsv': [], ...vaultSeed,
+  });
   const savedEnv = { ...process.env };
   Object.assign(process.env, {
     SPARK_PORT: '0', SPARK_BIND: '127.0.0.1',
-    SPARK_MEMORY_DIR: memoryDir, SPARK_LOGS_DIR: logsDir, SPARK_ARTICLES_DIR: articlesDir,
+    VAULT_URL: `http://127.0.0.1:${vault.port}`, VAULT_TOKEN: 'vault-test-token',
+    SPARK_LOGS_DIR: logsDir, SPARK_ARTICLES_DIR: articlesDir, SPARK_LEARNING_DIR: learningDir,
     SPARK_TOKEN: 'test-static-token', BWS_ACCESS_TOKEN: '',
     ...envOverrides,
   });
@@ -40,8 +79,9 @@ async function startServer(envOverrides = {}) {
   const cleanup = () => {
     Object.keys(process.env).forEach(k => { if (!(k in savedEnv)) delete process.env[k]; });
     Object.assign(process.env, savedEnv);
+    vault.server.close();
   };
-  return { ...handle, cleanup };
+  return { ...handle, vault, cleanup };
 }
 
 test('GET /health responds without auth', async () => {
@@ -99,10 +139,9 @@ test('/act: an ungated idea-capture utterance executes immediately', async () =>
 });
 
 test('/act: a gated utterance (task delete) needs confirmation and reports scope-not-wired once confirmed', async () => {
-  const { server, port, cleanup, store } = await startServer();
+  const { server, port, cleanup } = await startServer({}, { 'scope/tasks.tsv': [{ ID: 'T1', TITLE: 'Ship the release notes', JIRA_KEY: '-' }] });
   const auth = { Authorization: 'Bearer test-static-token', 'Content-Type': 'application/json' };
   try {
-    store.append('scope/tasks.tsv', { ID: 'T1', TITLE: 'Ship the release notes', JIRA_KEY: '-' });
     const first = await fetch(`http://127.0.0.1:${port}/act`, { method: 'POST', headers: auth, body: JSON.stringify({ text: 'delete ship the release notes' }) });
     const firstBody = await first.json();
     assert.equal(firstBody.needsConfirmation, true);

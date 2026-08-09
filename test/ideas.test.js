@@ -8,9 +8,9 @@ function makeStore(seed = {}) {
   const data = { ...seed };
   return {
     data,
-    readTSV: (rel) => (data[rel] || []).slice(),
-    appendTSV: (rel, row) => { (data[rel] = data[rel] || []).push(row); },
-    rewriteTSV: (rel, fn) => {
+    readTSV: async (rel) => (data[rel] || []).slice(),
+    appendTSV: async (rel, row) => { (data[rel] = data[rel] || []).push(row); return true; },
+    rewriteTSV: async (rel, fn) => {
       const before = (data[rel] || []).length;
       data[rel] = fn((data[rel] || []).slice());
       return before - data[rel].length;
@@ -26,15 +26,15 @@ test('createIdeasClient throws without the required deps', () => {
   assert.throws(() => createIdeasClient({}));
 });
 
-test('captureIdea requires a title', () => {
+test('captureIdea requires a title', async () => {
   const client = makeClient();
-  assert.throws(() => client.captureIdea({}));
+  await assert.rejects(() => client.captureIdea({}));
 });
 
 test('captureIdea defaults stage/type/status and fires onCaptured without blocking', async () => {
   let captured = null;
   const client = createIdeasClient({ ...makeStore(), tsvEscapeText, tsvUnescapeText, onCaptured: async (row) => { captured = row; } });
-  const row = client.captureIdea({ title: 'A new agent capability' });
+  const row = await client.captureIdea({ title: 'A new agent capability' });
   assert.equal(row.STAGE, 'captured');
   assert.equal(row.TYPE, 'general');
   assert.equal(row.STATUS, 'open');
@@ -42,55 +42,55 @@ test('captureIdea defaults stage/type/status and fires onCaptured without blocki
   assert.equal(captured.ID, row.ID);
 });
 
-test('listIdeas computes stats/facets/tags from what is actually on file', () => {
+test('listIdeas computes stats/facets/tags from what is actually on file', async () => {
   const client = makeClient();
-  client.captureIdea({ title: 'Idea one', type: 'agent', domain: 'chat', tags: 'ux, speed' });
-  client.captureIdea({ title: 'Idea two', type: 'product' });
-  const r = client.listIdeas();
+  await client.captureIdea({ title: 'Idea one', type: 'agent', domain: 'chat', tags: 'ux, speed' });
+  await client.captureIdea({ title: 'Idea two', type: 'product' });
+  const r = await client.listIdeas();
   assert.equal(r.stats.total, 2);
   assert.equal(r.stats.agent, 1);
   assert.deepEqual(r.domains, ['chat']);
   assert.deepEqual(r.tags, ['speed', 'ux']);
 });
 
-test('updateIdea edits fields and validates status; throws for an unknown id', () => {
+test('updateIdea edits fields and validates status; throws for an unknown id', async () => {
   const client = makeClient();
-  const row = client.captureIdea({ title: 'x' });
-  client.updateIdea({ id: row.ID, stage: 'shipped', status: 'done' });
-  const updated = client.readIdeas().find(i => i.ID === row.ID);
+  const row = await client.captureIdea({ title: 'x' });
+  await client.updateIdea({ id: row.ID, stage: 'shipped', status: 'done' });
+  const updated = (await client.readIdeas()).find(i => i.ID === row.ID);
   assert.equal(updated.STAGE, 'shipped');
   assert.equal(updated.STATUS, 'done');
-  assert.throws(() => client.updateIdea({ id: 'nope' }));
+  await assert.rejects(() => client.updateIdea({ id: 'nope' }));
 });
 
-test('deleteIdea removes the row', () => {
+test('deleteIdea removes the row', async () => {
   const client = makeClient();
-  const row = client.captureIdea({ title: 'x' });
-  assert.equal(client.deleteIdea(row.ID).success, true);
-  assert.equal(client.readIdeas().length, 0);
+  const row = await client.captureIdea({ title: 'x' });
+  assert.equal((await client.deleteIdea(row.ID)).success, true);
+  assert.equal((await client.readIdeas()).length, 0);
 });
 
-test('applyIdeaDirectives executes [[IDEA: ...]] directives, strips them, and appends a real receipt', () => {
+test('applyIdeaDirectives executes [[IDEA: ...]] directives, strips them, and appends a real receipt', async () => {
   const client = makeClient();
   const reply = 'Noted. [[IDEA: Ship faster || Cut the build step || general || ci]] Let me know if you want more.';
-  const { text, captured } = client.applyIdeaDirectives(reply);
+  const { text, captured } = await client.applyIdeaDirectives(reply);
   assert.equal(captured.length, 1);
   assert.equal(captured[0].TITLE, 'Ship faster');
   assert.doesNotMatch(text, /\[\[IDEA:/);
   assert.match(text, new RegExp(captured[0].ID));
 });
 
-test('applyIdeaDirectives handles multiple directives and reports a plural receipt', () => {
+test('applyIdeaDirectives handles multiple directives and reports a plural receipt', async () => {
   const client = makeClient();
   const reply = '[[IDEA: First || detail || general || x]] and [[IDEA: Second || detail || general || y]]';
-  const { captured, text } = client.applyIdeaDirectives(reply);
+  const { captured, text } = await client.applyIdeaDirectives(reply);
   assert.equal(captured.length, 2);
   assert.match(text, /Captured 2 ideas/);
 });
 
-test('applyIdeaDirectives is a no-op passthrough when there is no directive', () => {
+test('applyIdeaDirectives is a no-op passthrough when there is no directive', async () => {
   const client = makeClient();
-  const r = client.applyIdeaDirectives('Just a normal reply.');
+  const r = await client.applyIdeaDirectives('Just a normal reply.');
   assert.equal(r.captured.length, 0);
   assert.equal(r.text, 'Just a normal reply.');
 });
