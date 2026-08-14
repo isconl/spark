@@ -21,8 +21,11 @@ const PORT = parseInt(process.env.SPARK_PORT || process.env.PORT || '8085', 10);
 const BIND = process.env.SPARK_BIND || '127.0.0.1';
 const VAULT_URL = process.env.VAULT_URL || '';
 const LOGS_DIR = process.env.SPARK_LOGS_DIR || path.join(__dirname, '..', 'runtime', 'logs');
-// Lesson/article content is still plain files on spark's own disk, not
-// vault-owned rows -- only TSV data moved to the remote store.
+// Lesson content (learning/<courseId>/*.md) now reads through vault's
+// /vault-dir/ + /vault-raw/ HTTP API instead of a local directory -- same
+// host-sharing gap /lib/store.js's TSV read/append/rewrite were built to
+// fix, just never closed for this. Notes are personal scratch annotations
+// on a lesson, not vault-owned classroom content, and stay local.
 const LEARNING_DIR = process.env.SPARK_LEARNING_DIR || path.join(__dirname, '..', 'memory', 'learning');
 // No hardcoded personal path -- was Sconl/Core/Axial/Creator/Author/author-nonfiction
 // in the original; genericized to an env var with a neutral local default.
@@ -50,15 +53,6 @@ function checkAuth(req) {
   return provided.length === token.length && provided === token;
 }
 
-function listLessonFiles(courseId) {
-  const dir = path.join(LEARNING_DIR, courseId);
-  try {
-    return fs.readdirSync(dir).filter(f => /\.md$/i.test(f) && !/\.(conflict|backup)[-.\d]/i.test(f)).sort().map(f => {
-      const fp = path.join(dir, f);
-      return { file: f, raw: fs.readFileSync(fp, 'utf8'), mtimeIso: fs.statSync(fp).mtime.toISOString() };
-    });
-  } catch { return []; }
-}
 
 function listArticleFiles() {
   try {
@@ -98,8 +92,15 @@ async function main() {
   const nlu = createNluClient({ readTSV, ideas, auditLog });
 
   const learning = createLearningClient({
-    readTSV, appendTSV, rewriteTSV, auditLog, listLessonFiles,
-    readLessonFile: (course, file) => { try { return fs.readFileSync(path.join(LEARNING_DIR, course, file), 'utf8'); } catch { return null; } },
+    readTSV, appendTSV, rewriteTSV, auditLog,
+    listLessonFiles: async (courseId) => {
+      const entries = await store.listDir(`learning/${courseId}`);
+      const mdFiles = entries.filter(e => /\.md$/i.test(e.name)).sort((a, b) => a.name.localeCompare(b.name));
+      return Promise.all(mdFiles.map(async (e) => ({
+        file: e.name, raw: await store.rawRead(`learning/${courseId}/${e.name}`), mtimeIso: e.mtimeIso,
+      })));
+    },
+    readLessonFile: async (course, file) => { try { return await store.rawRead(`learning/${course}/${file}`); } catch { return null; } },
     readNoteFile: (course, file) => { try { return fs.readFileSync(path.join(LEARNING_DIR, course, '_notes', file), 'utf8'); } catch { return ''; } },
     writeNoteFile: (course, file, text) => {
       const dir = path.join(LEARNING_DIR, course, '_notes');
@@ -148,7 +149,7 @@ async function main() {
 
       if (pathname === '/learning' && req.method === 'GET') return sendJson(res, 200, await learning.listCourses());
       if (pathname === '/learning/lesson' && req.method === 'GET') {
-        return sendJson(res, 200, learning.getLesson(url.searchParams.get('course') || '', url.searchParams.get('file') || ''));
+        return sendJson(res, 200, await learning.getLesson(url.searchParams.get('course') || '', url.searchParams.get('file') || ''));
       }
       if (pathname === '/learning/notes' && req.method === 'GET') {
         return sendJson(res, 200, learning.getNote(url.searchParams.get('course') || '', url.searchParams.get('file') || ''));

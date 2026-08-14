@@ -12,16 +12,48 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-function startFakeVault(seed = {}) {
+function startFakeVault(seed = {}, rawSeed = {}) {
   const data = { ...seed };
+  const raw = { ...rawSeed };
   return new Promise((resolve) => {
     const server = http.createServer((req, res) => {
       const url = new URL(req.url, 'http://localhost');
-      const collection = decodeURIComponent(url.pathname.slice('/vault/'.length));
       let body = '';
       req.on('data', (c) => { body += c; });
       req.on('end', () => {
         res.setHeader('Content-Type', 'application/json');
+
+        // Non-TSV content (lesson markdown) -- same GET/PUT shape as
+        // /vault/:collection, plus a directory listing for filenames the
+        // caller doesn't know in advance.
+        if (url.pathname.startsWith('/vault-raw/')) {
+          const collection = decodeURIComponent(url.pathname.slice('/vault-raw/'.length));
+          if (req.method === 'GET') {
+            if (!(collection in raw)) { res.writeHead(404); return res.end(JSON.stringify({ error: 'Not Found' })); }
+            res.writeHead(200);
+            return res.end(JSON.stringify({ collection, text: raw[collection] }));
+          }
+          if (req.method === 'PUT') {
+            let text = '';
+            try { text = JSON.parse(body || '{}').text || ''; } catch { /* ignore */ }
+            raw[collection] = text;
+            res.writeHead(200);
+            return res.end(JSON.stringify({ ok: true, collection, bytes: text.length }));
+          }
+          res.writeHead(404);
+          return res.end(JSON.stringify({ error: 'Not Found' }));
+        }
+        if (url.pathname.startsWith('/vault-dir/') && req.method === 'GET') {
+          const dirPath = decodeURIComponent(url.pathname.slice('/vault-dir/'.length));
+          const prefix = `${dirPath}/`;
+          const files = Object.keys(raw)
+            .filter((k) => k.startsWith(prefix) && !k.slice(prefix.length).includes('/'))
+            .map((k) => ({ name: k.slice(prefix.length), mtimeIso: '2026-08-01T00:00:00.000Z' }));
+          res.writeHead(200);
+          return res.end(JSON.stringify({ path: dirPath, files }));
+        }
+
+        const collection = decodeURIComponent(url.pathname.slice('/vault/'.length));
         if (req.method === 'GET') {
           res.writeHead(200);
           return res.end(JSON.stringify({ collection, rows: data[collection] || [] }));
@@ -45,25 +77,28 @@ function startFakeVault(seed = {}) {
         res.end(JSON.stringify({ error: 'Not Found' }));
       });
     });
-    server.listen(0, '127.0.0.1', () => resolve({ server, data, port: server.address().port }));
+    server.listen(0, '127.0.0.1', () => resolve({ server, data, raw, port: server.address().port }));
   });
 }
 
 function tmpEnv() {
   const logsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'spark-e2e-logs-'));
   const articlesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'spark-e2e-articles-'));
+  // Notes (personal scratch annotations on a lesson) are still local-only,
+  // unlike lesson content itself -- see LEARNING_DIR's comment in server.js.
   const learningDir = fs.mkdtempSync(path.join(os.tmpdir(), 'spark-e2e-learning-'));
-  fs.mkdirSync(path.join(learningDir, 'js101'), { recursive: true });
-  fs.writeFileSync(path.join(learningDir, 'js101', '01-intro.md'), '# Intro\nHello');
   fs.writeFileSync(path.join(articlesDir, '20260101_essay.md'), '# My Essay\n\n' + 'word '.repeat(50));
   return { logsDir, articlesDir, learningDir };
 }
 
-async function startServer(envOverrides = {}, vaultSeed = {}) {
+async function startServer(envOverrides = {}, vaultSeed = {}, vaultRawSeed = {}) {
   const { logsDir, articlesDir, learningDir } = tmpEnv();
   const vault = await startFakeVault({
     'learning/courses.tsv': [], 'learning/progress.tsv': [], 'learning/resume.tsv': [],
     'scope/tasks.tsv': [], ...vaultSeed,
+  }, {
+    'learning/js101/01-intro.md': '# Intro\nHello world',
+    ...vaultRawSeed,
   });
   const savedEnv = { ...process.env };
   Object.assign(process.env, {
