@@ -43,7 +43,7 @@ function sendJson(res, status, obj) {
 }
 
 function checkAuth(req) {
-  const token = process.env.SPARK_TOKEN || process.env.ISCONL_TOKEN || '';
+  const token = process.env.SPARK_TOKEN || process.env.ISCONL_TOKEN || secretStore.get('SPARK_TOKEN') || '';
   if (!token) return false;
   const auth = req.headers.authorization || '';
   const provided = auth.startsWith('Bearer ') ? auth.slice(7) : '';
@@ -110,7 +110,7 @@ async function main() {
 
   const articles = createArticlesClient({ listFiles: listArticleFiles });
 
-  const tokenConfigured = !!(process.env.SPARK_TOKEN || process.env.ISCONL_TOKEN);
+  const tokenConfigured = !!(process.env.SPARK_TOKEN || process.env.ISCONL_TOKEN || secretStore.get('SPARK_TOKEN'));
   const isLoopback = ['127.0.0.1', '::1', 'localhost'].includes(BIND);
   if (!isLoopback && !tokenConfigured) {
     console.error('  REFUSING TO BIND: no SPARK_TOKEN/ISCONL_TOKEN configured and BIND is not loopback.');
