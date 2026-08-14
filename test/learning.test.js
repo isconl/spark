@@ -32,15 +32,15 @@ test('listCourses attaches lessons (with progress status) and the resume list, n
   assert.equal(r.resume.length, 1);
 });
 
-test('getLesson rejects a path-escaping reference and throws for a missing lesson', () => {
-  const client = createLearningClient({ ...makeStore(), readLessonFile: () => null });
-  assert.throws(() => client.getLesson('js101', '../../etc/passwd'));
-  assert.throws(() => client.getLesson('js101', 'missing.md'));
+test('getLesson rejects a path-escaping reference and throws for a missing lesson', async () => {
+  const client = createLearningClient({ ...makeStore(), readLessonFile: async () => null });
+  await assert.rejects(() => client.getLesson('js101', '../../etc/passwd'));
+  await assert.rejects(() => client.getLesson('js101', 'missing.md'));
 });
 
-test('getLesson returns content for a valid reference', () => {
-  const client = createLearningClient({ ...makeStore(), readLessonFile: () => '# Hello' });
-  assert.equal(client.getLesson('js101', '01-intro.md').content, '# Hello');
+test('getLesson returns content for a valid reference', async () => {
+  const client = createLearningClient({ ...makeStore(), readLessonFile: async () => '# Hello' });
+  assert.equal((await client.getLesson('js101', '01-intro.md')).content, '# Hello');
 });
 
 test('saveNote writes via the injected writer and getNote reads it back', () => {
