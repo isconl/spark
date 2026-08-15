@@ -161,6 +161,7 @@ async function main() {
       if (pathname === '/learning/resume' && req.method === 'POST') return sendJson(res, 200, await learning.saveResume(JSON.parse(await readBody(req) || '{}')));
       if (pathname === '/learning/progress' && req.method === 'POST') return sendJson(res, 200, await learning.saveProgress(JSON.parse(await readBody(req) || '{}')));
       if (pathname === '/learning/contributions' && req.method === 'GET') return sendJson(res, 200, await learning.contributions());
+      if (pathname === '/learning/campus' && req.method === 'GET') return sendJson(res, 200, await learning.campus());
 
       if (pathname === '/articles' && req.method === 'GET') return sendJson(res, 200, articles.listArticles());
     } catch (e) {
