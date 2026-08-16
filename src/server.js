@@ -148,6 +148,23 @@ async function main() {
       }
 
       if (pathname === '/learning' && req.method === 'GET') return sendJson(res, 200, await learning.listCourses());
+      if (pathname === '/learning/groups' && req.method === 'GET') return sendJson(res, 200, await learning.listGroups());
+      if (pathname === '/learning/group' && req.method === 'POST') {
+        const p = JSON.parse(await readBody(req) || '{}');
+        return sendJson(res, 200, await learning.saveGroup(p));
+      }
+      if (pathname === '/learning/group/archive' && req.method === 'POST') {
+        const p = JSON.parse(await readBody(req) || '{}');
+        return sendJson(res, 200, await learning.archiveGroup(p.id || p.groupId, p.status));
+      }
+      if (pathname === '/learning/course/status' && req.method === 'POST') {
+        const p = JSON.parse(await readBody(req) || '{}');
+        return sendJson(res, 200, await learning.setCourseStatus(p));
+      }
+      if (pathname === '/learning/module/meta' && req.method === 'POST') {
+        const p = JSON.parse(await readBody(req) || '{}');
+        return sendJson(res, 200, await learning.setModuleMeta(p));
+      }
       if (pathname === '/learning/lesson' && req.method === 'GET') {
         return sendJson(res, 200, await learning.getLesson(url.searchParams.get('course') || '', url.searchParams.get('file') || ''));
       }
