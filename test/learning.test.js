@@ -77,3 +77,45 @@ test('contributions returns a 365-day series ending today', async () => {
   assert.equal(r.days.length, 365);
   assert.equal(r.days[r.days.length - 1].date, new Date().toISOString().slice(0, 10));
 });
+
+test('saveGroup creates and updates groups, archiveGroup changes status', async () => {
+  const store = makeStore({
+    'learning/groups.tsv': []
+  });
+  const client = createLearningClient({ ...store });
+  await client.saveGroup({ id: 'core-track', label: 'Core Track', description: 'Main topics', icon: '🚀' });
+  assert.equal(store.data['learning/groups.tsv'].length, 1);
+  assert.equal(store.data['learning/groups.tsv'][0].LABEL, 'Core Track');
+
+  await client.archiveGroup('core-track', 'archived');
+  assert.equal(store.data['learning/groups.tsv'][0].STATUS, 'archived');
+});
+
+test('setCourseStatus updates course status and group assignment', async () => {
+  const store = makeStore({
+    'learning/courses.tsv': [{ ID: 'c1', TITLE: 'Course 1', STATUS: 'active', GROUP_ID: 'g1' }]
+  });
+  const client = createLearningClient({ ...store });
+  await client.setCourseStatus({ courseId: 'c1', status: 'archived', groupId: 'g2' });
+  assert.equal(store.data['learning/courses.tsv'][0].STATUS, 'archived');
+  assert.equal(store.data['learning/courses.tsv'][0].GROUP_ID, 'g2');
+});
+
+test('setModuleMeta saves and updates module relevance, version, reviewedAt', async () => {
+  const store = makeStore({
+    'learning/modules_meta.tsv': []
+  });
+  const client = createLearningClient({ ...store });
+  await client.setModuleMeta({
+    courseId: 'c1',
+    lessonFile: '01-intro.md',
+    relevance: 'period-specific',
+    relevanceNote: 'August 2026 baseline',
+    version: 'v1.0.0',
+    reviewedAt: '2026-08-16'
+  });
+  assert.equal(store.data['learning/modules_meta.tsv'].length, 1);
+  assert.equal(store.data['learning/modules_meta.tsv'][0].RELEVANCE, 'period-specific');
+  assert.equal(store.data['learning/modules_meta.tsv'][0].VERSION, 'v1.0.0');
+});
+
