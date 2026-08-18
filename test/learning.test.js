@@ -119,3 +119,26 @@ test('setModuleMeta saves and updates module relevance, version, reviewedAt', as
   assert.equal(store.data['learning/modules_meta.tsv'][0].VERSION, 'v1.0.0');
 });
 
+test('primeBrief returns the lesson with the highest keyword overlap against the query', async () => {
+  const store = makeStore({
+    'learning/courses.tsv': [{ ID: 'js101', TITLE: 'JS Basics' }, { ID: 'py101', TITLE: 'Python Basics' }],
+  });
+  const client = createLearningClient({ ...store,
+    listLessonFiles: async (id) => ({
+      js101: [{ file: '01-intro.md', raw: 'closures and scope in javascript, closures again' }],
+      py101: [{ file: '01-intro.md', raw: 'variables and loops in python' }],
+    }[id] || []),
+  });
+  const r = await client.primeBrief({ q: 'explain closures in javascript' });
+  assert.equal(r.ok, true);
+  assert.equal(r.course, 'JS Basics');
+  assert.equal(r.file, '01-intro.md');
+});
+
+test('primeBrief returns ok:false when nothing overlaps or no query is given', async () => {
+  const store = makeStore({ 'learning/courses.tsv': [{ ID: 'js101', TITLE: 'JS Basics' }] });
+  const client = createLearningClient({ ...store, listLessonFiles: async () => [{ file: '01.md', raw: 'unrelated content here' }] });
+  assert.equal((await client.primeBrief({ q: 'zzzzz nomatch terms' })).ok, false);
+  assert.equal((await client.primeBrief({})).ok, false);
+});
+
