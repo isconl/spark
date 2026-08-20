@@ -15,6 +15,7 @@ const { createIdeasClient } = require('../lib/ideas');
 const { createNluClient } = require('../lib/nlu');
 const { createLearningClient } = require('../lib/learning');
 const { createArticlesClient } = require('../lib/articles');
+const writerAssist = require('../lib/writer-assist');
 const manifest = require('../lib/manifest');
 
 const PORT = parseInt(process.env.SPARK_PORT || process.env.PORT || '8085', 10);
@@ -111,6 +112,12 @@ async function main() {
 
   const articles = createArticlesClient({ listFiles: listArticleFiles });
 
+  // BA26081812: Groq-backed, per Architect's 20 Aug decision -- spark's first
+  // real AI-calling capability. getGroqKey resolves ISCONL_GROQ_API_KEY
+  // (the Bitwarden-namespaced key secrets.js's own prefix convention
+  // exposes under its bare name too, see lib/secrets.js's SECRET_PREFIX).
+  const getGroqKey = () => process.env.GROQ_API_KEY || secretStore.get('GROQ_API_KEY') || '';
+
   const tokenConfigured = !!(process.env.SPARK_TOKEN || process.env.ISCONL_TOKEN || secretStore.get('SPARK_TOKEN'));
   const isLoopback = ['127.0.0.1', '::1', 'localhost'].includes(BIND);
   if (!isLoopback && !tokenConfigured) {
@@ -182,6 +189,15 @@ async function main() {
       if (pathname === '/learning/prime' && req.method === 'GET') return sendJson(res, 200, await learning.primeBrief({ q: url.searchParams.get('q') || '' }));
 
       if (pathname === '/articles' && req.method === 'GET') return sendJson(res, 200, articles.listArticles());
+
+      if (pathname === '/writer/research-field' && req.method === 'POST') {
+        const p = JSON.parse(await readBody(req) || '{}');
+        return sendJson(res, 200, await writerAssist.researchField({ ...p, getKey: getGroqKey }));
+      }
+      if (pathname === '/writer/full-draft' && req.method === 'POST') {
+        const p = JSON.parse(await readBody(req) || '{}');
+        return sendJson(res, 200, await writerAssist.fullDraft({ ...p, getKey: getGroqKey }));
+      }
     } catch (e) {
       return sendJson(res, 400, { success: false, error: String(e.message || e) });
     }
