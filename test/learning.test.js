@@ -78,6 +78,44 @@ test('contributions returns a 365-day series ending today', async () => {
   assert.equal(r.days[r.days.length - 1].date, new Date().toISOString().slice(0, 10));
 });
 
+function daysAgo(n) {
+  const d = new Date(); d.setDate(d.getDate() - n);
+  return d.toISOString().slice(0, 10);
+}
+
+test('campus() drops a TRIGGER=always row once it is older than 14 days', async () => {
+  const store = makeStore({
+    'learning/courses.tsv': [{ ID: 'c1', TITLE: 'Course 1' }],
+    'learning/campus.tsv': [
+      { ID: 'stale', BAND: 'now', COURSE_ID: 'c1', LESSON: '01-a.md', TRIGGER: 'always', STATUS: 'active', UPDATED_AT: daysAgo(20) },
+    ],
+  });
+  const client = createLearningClient({ ...store,
+    listLessonFiles: (id) => id === 'c1' ? [{ file: '01-a.md', raw: '# A', mtimeIso: daysAgo(20) }] : [],
+  });
+  const r = await client.campus();
+  const nowBand = r.bands.find(b => b.key === 'now');
+  assert.ok(!nowBand || !nowBand.items.some(i => i.lesson === '01-a.md'),
+    'a 20-day-old always row should have expired out of "now"');
+});
+
+test('campus() keeps a TRIGGER=always row alive past 14 days when its module is RELEVANCE=evergreen', async () => {
+  const store = makeStore({
+    'learning/courses.tsv': [{ ID: 'c1', TITLE: 'Course 1' }],
+    'learning/modules_meta.tsv': [{ COURSE_ID: 'c1', LESSON_FILE: '01-a.md', RELEVANCE: 'evergreen' }],
+    'learning/campus.tsv': [
+      { ID: 'evg', BAND: 'now', COURSE_ID: 'c1', LESSON: '01-a.md', TRIGGER: 'always', STATUS: 'active', UPDATED_AT: daysAgo(20) },
+    ],
+  });
+  const client = createLearningClient({ ...store,
+    listLessonFiles: (id) => id === 'c1' ? [{ file: '01-a.md', raw: '# A', mtimeIso: daysAgo(20) }] : [],
+  });
+  const r = await client.campus();
+  const nowBand = r.bands.find(b => b.key === 'now');
+  assert.ok(nowBand && nowBand.items.some(i => i.lesson === '01-a.md'),
+    'an evergreen module should stay in "now" regardless of the row\'s own age');
+});
+
 test('saveGroup creates and updates groups, archiveGroup changes status', async () => {
   const store = makeStore({
     'learning/groups.tsv': []
