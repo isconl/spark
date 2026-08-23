@@ -187,6 +187,7 @@ async function main() {
       if (pathname === '/learning/contributions' && req.method === 'GET') return sendJson(res, 200, await learning.contributions());
       if (pathname === '/learning/campus' && req.method === 'GET') return sendJson(res, 200, await learning.campus());
       if (pathname === '/learning/prime' && req.method === 'GET') return sendJson(res, 200, await learning.primeBrief({ q: url.searchParams.get('q') || '' }));
+      if (pathname === '/learning/manifest' && req.method === 'GET') return sendJson(res, 200, await learning.getManifest());
 
       if (pathname === '/articles' && req.method === 'GET') return sendJson(res, 200, articles.listArticles());
 

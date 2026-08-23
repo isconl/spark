@@ -32,6 +32,23 @@ test('listCourses attaches lessons (with progress status) and the resume list, n
   assert.equal(r.resume.length, 1);
 });
 
+test('getManifest returns flat list of all lessons with revisions and versions', async () => {
+  const store = makeStore({
+    'learning/courses.tsv': [{ ID: 'js101', NAME: 'JS Basics' }],
+    'learning/modules_meta.tsv': [{ COURSE_ID: 'js101', LESSON_FILE: '01-intro.md', VERSION: 'v1.2.0', REVIEWED_AT: '2026-08-20' }],
+  });
+  const client = createLearningClient({ ...store,
+    listLessonFiles: (id) => id === 'js101' ? [{ file: '01-intro.md', raw: '# Intro\nHello world', mtimeIso: '2026-08-20T00:00:00Z' }] : [],
+  });
+  const r = await client.getManifest();
+  assert.equal(r.ok, true);
+  assert.equal(r.count, 1);
+  assert.equal(r.lessons[0].course, 'js101');
+  assert.equal(r.lessons[0].file, '01-intro.md');
+  assert.equal(r.lessons[0].version, 'v1.2.0');
+  assert.equal(r.lessons[0].rev, 'v1.2.0');
+});
+
 test('getLesson rejects a path-escaping reference and throws for a missing lesson', async () => {
   const client = createLearningClient({ ...makeStore(), readLessonFile: async () => null });
   await assert.rejects(() => client.getLesson('js101', '../../etc/passwd'));
