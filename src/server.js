@@ -16,6 +16,7 @@ const { createNluClient } = require('../lib/nlu');
 const { createLearningClient } = require('../lib/learning');
 const { createArticlesClient } = require('../lib/articles');
 const writerAssist = require('../lib/writer-assist');
+const { generateDiaSections } = require('../lib/dia-generate');
 const manifest = require('../lib/manifest');
 
 const PORT = parseInt(process.env.SPARK_PORT || process.env.PORT || '8085', 10);
@@ -198,6 +199,12 @@ async function main() {
       if (pathname === '/writer/full-draft' && req.method === 'POST') {
         const p = JSON.parse(await readBody(req) || '{}');
         return sendJson(res, 200, await writerAssist.fullDraft({ ...p, getKey: getGroqKey }));
+      }
+
+      // BM26082601: dossier regeneration, called by circle over HTTP.
+      if (pathname === '/generate-dia' && req.method === 'POST') {
+        const p = JSON.parse(await readBody(req) || '{}');
+        return sendJson(res, 200, await generateDiaSections({ ...p, getKey: getGroqKey }));
       }
     } catch (e) {
       return sendJson(res, 400, { success: false, error: String(e.message || e) });
