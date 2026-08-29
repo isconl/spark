@@ -177,6 +177,11 @@ async function main() {
       if (pathname === '/learning/lesson' && req.method === 'GET') {
         return sendJson(res, 200, await learning.getLesson(url.searchParams.get('course') || '', url.searchParams.get('file') || ''));
       }
+      if (pathname === '/learning/parse-md' && req.method === 'POST') {
+        const { parseMarkdownBlockTree } = require('../lib/learning-parser');
+        const p = JSON.parse(await readBody(req) || '{}');
+        return sendJson(res, 200, parseMarkdownBlockTree(p.markdown || ''));
+      }
       if (pathname === '/learning/notes' && req.method === 'GET') {
         return sendJson(res, 200, learning.getNote(url.searchParams.get('course') || '', url.searchParams.get('file') || ''));
       }
