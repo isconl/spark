@@ -177,6 +177,37 @@ async function main() {
       if (pathname === '/learning/lesson' && req.method === 'GET') {
         return sendJson(res, 200, await learning.getLesson(url.searchParams.get('course') || '', url.searchParams.get('file') || ''));
       }
+      // BL26083105: serve lesson _assets/ image files (binary, not text — bypass vault rawRead).
+      // Files live at LEARNING_DIR/<course>/_assets/<file>. Validated strictly: only word/hyphen
+      // course IDs, only safe filenames with known image/svg extensions, no path traversal.
+      if (pathname === '/learning/asset' && req.method === 'GET') {
+        const course = url.searchParams.get('course') || '';
+        const file   = url.searchParams.get('file')   || '';
+        if (!/^[\w-]+$/.test(course) || !/^[\w.-]+$/.test(file) || file.includes('..') ||
+            !/\.(jpe?g|png|gif|webp|svg|avif)$/i.test(file)) {
+          return sendJson(res, 400, { error: 'invalid course or file' });
+        }
+        const MIME = { jpg:'image/jpeg', jpeg:'image/jpeg', png:'image/png', gif:'image/gif',
+                       webp:'image/webp', svg:'image/svg+xml', avif:'image/avif' };
+        const ext  = file.split('.').pop().toLowerCase();
+        const assetPath = path.join(LEARNING_DIR, course, '_assets', file);
+        try {
+          const buf = fs.readFileSync(assetPath);
+          res.writeHead(200, {
+            'Content-Type': MIME[ext] || 'application/octet-stream',
+            'Content-Length': buf.length,
+            'Cache-Control': 'public, max-age=31536000, immutable',
+          });
+          return res.end(buf);
+        } catch {
+          return sendJson(res, 404, { error: 'asset not found' });
+        }
+      }
+      if (pathname === '/learning/parse-md' && req.method === 'POST') {
+        const { parseMarkdownBlockTree } = require('../lib/learning-parser');
+        const p = JSON.parse(await readBody(req) || '{}');
+        return sendJson(res, 200, parseMarkdownBlockTree(p.markdown || ''));
+      }
       if (pathname === '/learning/notes' && req.method === 'GET') {
         return sendJson(res, 200, learning.getNote(url.searchParams.get('course') || '', url.searchParams.get('file') || ''));
       }
