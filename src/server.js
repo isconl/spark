@@ -18,6 +18,7 @@ const { createArticlesClient } = require('../lib/articles');
 const writerAssist = require('../lib/writer-assist');
 const { generateDiaSections } = require('../lib/dia-generate');
 const { generateStatusBrief } = require('../lib/status-brief-generate');
+const { chatComplete } = require('../lib/ai-provider');
 const manifest = require('../lib/manifest');
 
 const PORT = parseInt(process.env.SPARK_PORT || process.env.PORT || '8085', 10);
@@ -243,6 +244,16 @@ async function main() {
       if (pathname === '/generate-status-brief' && req.method === 'POST') {
         const p = JSON.parse(await readBody(req) || '{}');
         return sendJson(res, 200, await generateStatusBrief({ ...p, getKey: getGroqKey }));
+      }
+
+      // FI26090501: one Groq-backed chat-completion call, on top of
+      // ai-provider.js's shared client -- hub's /api/chat and
+      // /api/chat/stream call this instead of the retired legacy monolith.
+      // `messages`: [{role, content}], caller (hub) owns history assembly.
+      if (pathname === '/ai/chat' && req.method === 'POST') {
+        const p = JSON.parse(await readBody(req) || '{}');
+        const text = await chatComplete({ messages: p.messages || [], getKey: getGroqKey });
+        return sendJson(res, 200, { response: text });
       }
     } catch (e) {
       return sendJson(res, 400, { success: false, error: String(e.message || e) });
