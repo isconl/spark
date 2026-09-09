@@ -18,6 +18,7 @@ const { createArticlesClient } = require('../lib/articles');
 const writerAssist = require('../lib/writer-assist');
 const { generateDiaSections } = require('../lib/dia-generate');
 const { generateStatusBrief } = require('../lib/status-brief-generate');
+const { chatComplete } = require('../lib/ai-provider');
 const manifest = require('../lib/manifest');
 
 const PORT = parseInt(process.env.SPARK_PORT || process.env.PORT || '8085', 10);
@@ -48,7 +49,14 @@ function sendJson(res, status, obj) {
   res.end(JSON.stringify(obj));
 }
 
+let _devAuthBypassLog = null; // set once main() creates auditLog; used by ISCONL_DEV_NO_AUTH (BS26090501)
+
 function checkAuth(req) {
+  // BS26090501: dev-only, loopback-gated (enforced at boot below), env-only -- never request-derived.
+  if (process.env.ISCONL_DEV_NO_AUTH === '1') {
+    if (_devAuthBypassLog) _devAuthBypassLog.log('dev_auth_bypass', { engine: 'spark', path: req.url });
+    return true;
+  }
   const token = process.env.SPARK_TOKEN || process.env.ISCONL_TOKEN || secretStore.get('SPARK_TOKEN') || '';
   if (!token) return false;
   const auth = req.headers.authorization || '';
@@ -76,6 +84,7 @@ async function main() {
   console.log(`  secrets: ${secretsResult.source}, ${secretsResult.count} key(s)`);
 
   const auditLog = createAuditLog({ logsDir: LOGS_DIR });
+  _devAuthBypassLog = auditLog;
   if (!VAULT_URL) {
     console.error('  REFUSING TO START: VAULT_URL is not configured -- spark has no data store without it.');
     process.exit(1);
@@ -122,6 +131,10 @@ async function main() {
 
   const tokenConfigured = !!(process.env.SPARK_TOKEN || process.env.ISCONL_TOKEN || secretStore.get('SPARK_TOKEN'));
   const isLoopback = ['127.0.0.1', '::1', 'localhost'].includes(BIND);
+  if (process.env.ISCONL_DEV_NO_AUTH === '1' && !isLoopback) {
+    console.error('  REFUSING TO BIND: ISCONL_DEV_NO_AUTH is set but BIND is not loopback -- dev auth bypass is loopback-only.');
+    process.exit(1);
+  }
   if (!isLoopback && !tokenConfigured) {
     console.error('  REFUSING TO BIND: no SPARK_TOKEN/ISCONL_TOKEN configured and BIND is not loopback.');
     process.exit(1);
@@ -243,6 +256,16 @@ async function main() {
       if (pathname === '/generate-status-brief' && req.method === 'POST') {
         const p = JSON.parse(await readBody(req) || '{}');
         return sendJson(res, 200, await generateStatusBrief({ ...p, getKey: getGroqKey }));
+      }
+
+      // FI26090501: one Groq-backed chat-completion call, on top of
+      // ai-provider.js's shared client -- hub's /api/chat and
+      // /api/chat/stream call this instead of the retired legacy monolith.
+      // `messages`: [{role, content}], caller (hub) owns history assembly.
+      if (pathname === '/ai/chat' && req.method === 'POST') {
+        const p = JSON.parse(await readBody(req) || '{}');
+        const text = await chatComplete({ messages: p.messages || [], getKey: getGroqKey });
+        return sendJson(res, 200, { response: text });
       }
     } catch (e) {
       return sendJson(res, 400, { success: false, error: String(e.message || e) });
