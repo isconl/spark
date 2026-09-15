@@ -32,6 +32,16 @@ test('listCourses attaches lessons (with progress status) and the resume list, n
   assert.equal(r.resume.length, 1);
 });
 
+test('FL26091206: listCourses seeds an empty groups.tsv from DEFAULT_GROUPS on first read, so a real row exists to persist onto', async () => {
+  const store = makeStore({ 'learning/courses.tsv': [{ ID: 'js101', NAME: 'JS Basics', GROUP_ID: 'corporate-mandate' }] });
+  const client = createLearningClient({ ...store, listLessonFiles: () => [] });
+  const r = await client.listCourses();
+  assert.ok(r.groups.some(g => g.id === 'corporate-mandate'));
+  // Seeded into the store, not just returned as an in-memory fallback --
+  // a second call reads the real row rather than re-seeding.
+  assert.ok(store.data['learning/groups.tsv'].length > 0);
+});
+
 test('getManifest returns flat list of all lessons with revisions and versions', async () => {
   const store = makeStore({
     'learning/courses.tsv': [{ ID: 'js101', NAME: 'JS Basics' }],
