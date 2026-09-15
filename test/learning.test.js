@@ -143,6 +143,86 @@ test('campus() keeps a TRIGGER=always row alive past 14 days when its module is 
     'an evergreen module should stay in "now" regardless of the row\'s own age');
 });
 
+test('BL26091504: a module with CAMPUS_BAND set contributes to the board with zero campus.tsv rows', async () => {
+  const store = makeStore({
+    'learning/courses.tsv': [{ ID: 'c1', TITLE: 'Course 1' }],
+    'learning/modules_meta.tsv': [{ COURSE_ID: 'c1', LESSON_FILE: '01-a.md', CAMPUS_BAND: 'now', CAMPUS_NOTE: 'read this first', UPDATED_AT: '2026-09-15' }],
+  });
+  const client = createLearningClient({ ...store,
+    listLessonFiles: (id) => id === 'c1' ? [{ file: '01-a.md', raw: '# A ' + 'word '.repeat(400), mtimeIso: '2026-09-15T00:00:00Z' }] : [],
+  });
+  const r = await client.campus();
+  const nowBand = r.bands.find(b => b.key === 'now');
+  assert.ok(nowBand, 'a self-declared module should populate its band with no hand-authored row at all');
+  const item = nowBand.items.find(i => i.lesson === '01-a.md');
+  assert.ok(item);
+  assert.equal(item.why, 'read this first');
+  // CAMPUS_COVERAGE_MINUTES not set -- defaults to the same words/200
+  // estimate the rest of this file computes, not a guess.
+  assert.equal(item.minutes, 2); // 401 words / 200, rounded
+});
+
+test('BL26091504: CAMPUS_COVERAGE_MINUTES overrides the computed word-count estimate', async () => {
+  // Deliberately BAND: 'now' -- a band with no 'now' items falls through to
+  // campus()'s pre-existing synthesized-fallback path (unrelated to this
+  // row), which would replace this item with computed advice and defeat
+  // the assertion below.
+  const store = makeStore({
+    'learning/courses.tsv': [{ ID: 'c1', TITLE: 'Course 1' }],
+    'learning/modules_meta.tsv': [{ COURSE_ID: 'c1', LESSON_FILE: '01-a.md', CAMPUS_BAND: 'now', CAMPUS_COVERAGE_MINUTES: '45', UPDATED_AT: '2026-09-15' }],
+  });
+  const client = createLearningClient({ ...store,
+    listLessonFiles: (id) => id === 'c1' ? [{ file: '01-a.md', raw: '# A short module', mtimeIso: '2026-09-15T00:00:00Z' }] : [],
+  });
+  const r = await client.campus();
+  const item = r.bands.find(b => b.key === 'now').items.find(i => i.lesson === '01-a.md');
+  assert.equal(item.minutes, 45);
+});
+
+test('BL26091504: a self-declared module expires after CAMPUS_EXPIRES_AFTER_DAYS unless RELEVANCE=evergreen', async () => {
+  const store = makeStore({
+    'learning/courses.tsv': [{ ID: 'c1', TITLE: 'Course 1' }, { ID: 'c2', TITLE: 'Course 2' }],
+    'learning/modules_meta.tsv': [
+      { COURSE_ID: 'c1', LESSON_FILE: '01-a.md', CAMPUS_BAND: 'now', CAMPUS_EXPIRES_AFTER_DAYS: '5', UPDATED_AT: daysAgo(10) },
+      { COURSE_ID: 'c2', LESSON_FILE: '01-b.md', CAMPUS_BAND: 'now', RELEVANCE: 'evergreen', UPDATED_AT: daysAgo(30) },
+    ],
+  });
+  const client = createLearningClient({ ...store,
+    listLessonFiles: (id) => id === 'c1' ? [{ file: '01-a.md', raw: '# A', mtimeIso: daysAgo(10) }]
+      : id === 'c2' ? [{ file: '01-b.md', raw: '# B', mtimeIso: daysAgo(30) }] : [],
+  });
+  const r = await client.campus();
+  const nowBand = r.bands.find(b => b.key === 'now');
+  assert.ok(!nowBand.items.some(i => i.lesson === '01-a.md'), 'expired past its own 5-day override, should be gone');
+  assert.ok(nowBand.items.some(i => i.lesson === '01-b.md'), 'evergreen module should stay pinned regardless of age');
+});
+
+test('BL26091504: setModuleMeta validates campusBand/campusDepth/campusPriority, and a save that omits campus fields does not wipe them', async () => {
+  const store = makeStore();
+  const client = createLearningClient({ ...store, listLessonFiles: () => [] });
+
+  await assert.rejects(
+    client.setModuleMeta({ courseId: 'c1', lessonFile: '01-a.md', campusBand: 'urgent' }),
+    /campusBand must be one of/
+  );
+  await assert.rejects(
+    client.setModuleMeta({ courseId: 'c1', lessonFile: '01-a.md', campusDepth: 'shallow' }),
+    /campusDepth must be one of/
+  );
+  await assert.rejects(
+    client.setModuleMeta({ courseId: 'c1', lessonFile: '01-a.md', campusPriority: 9 }),
+    /campusPriority must be between 1 and 5/
+  );
+
+  await client.setModuleMeta({ courseId: 'c1', lessonFile: '01-a.md', campusBand: 'now', campusPriority: 2 });
+  // A later save that only touches RELEVANCE must not silently blank the
+  // campus fields set moments ago.
+  await client.setModuleMeta({ courseId: 'c1', lessonFile: '01-a.md', relevance: 'current' });
+  const row = store.data['learning/modules_meta.tsv'][0];
+  assert.equal(row.CAMPUS_BAND, 'now');
+  assert.equal(row.CAMPUS_PRIORITY, '2');
+});
+
 test('saveGroup creates and updates groups, archiveGroup changes status', async () => {
   const store = makeStore({
     'learning/groups.tsv': []
