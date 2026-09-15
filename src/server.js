@@ -262,10 +262,18 @@ async function main() {
       // ai-provider.js's shared client -- hub's /api/chat and
       // /api/chat/stream call this instead of the retired legacy monolith.
       // `messages`: [{role, content}], caller (hub) owns history assembly.
+      //
+      // BI26091505: optional `tools` (hub's already-allowlist-filtered
+      // Groq-shaped tool definitions -- spark never decides the boundary,
+      // it only forwards whatever hub already filtered) turns on
+      // tool-calling for this call. spark has no opinion on which
+      // capabilities are safe to expose; that policy lives entirely in
+      // hub/lib/chat-tools.js, one layer up.
       if (pathname === '/ai/chat' && req.method === 'POST') {
         const p = JSON.parse(await readBody(req) || '{}');
-        const text = await chatComplete({ messages: p.messages || [], getKey: getGroqKey });
-        return sendJson(res, 200, { response: text });
+        const result = await chatComplete({ messages: p.messages || [], tools: p.tools, getKey: getGroqKey });
+        if (p.tools && p.tools.length) return sendJson(res, 200, { response: result.content, toolCalls: result.toolCalls });
+        return sendJson(res, 200, { response: result });
       }
     } catch (e) {
       return sendJson(res, 400, { success: false, error: String(e.message || e) });
